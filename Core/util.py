@@ -36,19 +36,22 @@ def response_status(resp):
 
 
 def open_image(image_file):
+    image_path = os.path.join(config.path(), "runtime", image_file)
     if os.name == "nt":
-        os.system('start ' + config.path() + '/Static/img/'+ image_file)  # for Windows
+        os.startfile(image_path)
     else:
         if os.uname()[0] == "Linux":
             if "deepin" in os.uname()[2]:
-                os.system("deepin-image-viewer " + image_file)  # for deepin
+                os.system("deepin-image-viewer " + image_path)  # for deepin
             else:
-                os.system("eog " + image_file)  # for Linux
+                os.system("eog " + image_path)  # for Linux
         else:
-            os.system("open " + image_file)  # for Mac
+            os.system("open " + image_path)  # for Mac
 
 
 def save_image(resp, image_file):
-    with open(config.path() + '/Static/img/' + image_file, 'wb') as f:
+    runtime_dir = os.path.join(config.path(), "runtime")
+    os.makedirs(runtime_dir, exist_ok=True)
+    with open(os.path.join(runtime_dir, image_file), 'wb') as f:
         for chunk in resp.iter_content(chunk_size=1024):
             f.write(chunk)

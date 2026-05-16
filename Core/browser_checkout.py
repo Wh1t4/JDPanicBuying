@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 
 MANAGED_BROWSER_PORT = 9223
-MANAGED_BROWSER_PROFILE_DIR = Path("D:/AI/JDPanicBuying/.codex-tasks/jd-managed-browser-profile")
+MANAGED_BROWSER_PROFILE_DIR = Path(__file__).resolve().parents[1] / "runtime" / "jd-managed-browser-profile"
 
 
 def _cookie_file_path() -> str:
@@ -55,6 +55,11 @@ def _default_chrome_path() -> str | None:
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/usr/bin/google-chrome",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
     ]
     for path in candidates:
         if os.path.exists(path):

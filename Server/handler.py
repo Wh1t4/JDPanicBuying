@@ -16,7 +16,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         frontend_dist = os.path.join(config.path(), "frontend", "dist")
         if os.path.exists(os.path.join(frontend_dist, "index.html")):
             return frontend_dist
-        return os.path.join(config.path(), "Static")
+        return ""
 
     # 处理一个GET请求
     def do_GET(self):
@@ -59,9 +59,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             pass
 
     def home(self):
+        if not self.rootPath:
+            self.missing_frontend()
+            return
         self.send_static_file(os.path.join(self.rootPath, "index.html"))
 
     def file(self, url):
+        if url.startswith("/runtime/"):
+            self.runtime_file(url)
+            return
+        if not self.rootPath:
+            self.missing_frontend()
+            return
         safe_url = os.path.normpath(url.lstrip("/"))
         if safe_url.startswith(".."):
             self.noFound()
@@ -70,12 +79,26 @@ class RequestHandler(BaseHTTPRequestHandler):
         if os.path.isdir(file_path):
             file_path = os.path.join(file_path, "index.html")
         if not os.path.exists(file_path):
-            legacy_path = os.path.join(config.path(), "Static", safe_url)
-            if os.path.exists(legacy_path):
-                file_path = legacy_path
+            if "." not in os.path.basename(safe_url):
+                file_path = os.path.join(self.rootPath, "index.html")
             else:
                 self.noFound()
                 return
+        self.send_static_file(file_path)
+
+    def runtime_file(self, url):
+        safe_url = os.path.normpath(url.lstrip("/"))
+        if safe_url.startswith(".."):
+            self.noFound()
+            return
+        runtime_root = os.path.join(config.path(), "runtime")
+        file_path = os.path.join(config.path(), safe_url)
+        if not os.path.abspath(file_path).startswith(os.path.abspath(runtime_root)):
+            self.noFound()
+            return
+        if not os.path.exists(file_path) or os.path.isdir(file_path):
+            self.noFound()
+            return
         self.send_static_file(file_path)
 
     def send_static_file(self, file_path):
@@ -124,13 +147,17 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def noFound(self):
-        fallback = os.path.join(self.rootPath, "404.html")
-        if os.path.exists(fallback):
-            self.send_static_file(fallback)
-            return
         self.send_response(404)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         body = "Not Found".encode()
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def missing_frontend(self):
+        self.send_response(503)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        body = "前端构建产物不存在，请先在 frontend 目录执行 npm install 和 npm run build。".encode()
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   BellRing,
@@ -7,9 +7,12 @@ import {
   ExternalLink,
   Loader2,
   LogIn,
+  Monitor,
   PackageSearch,
   Play,
   RefreshCcw,
+  ShieldCheck,
+  ShoppingCart,
   Square,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
@@ -80,6 +83,15 @@ type FormState = {
   stock_provider: 'page' | 'jos'
 }
 
+type ManagedBrowserInfo = {
+  login: boolean
+  message?: string
+  browser?: string
+  cookie_count?: number
+  current_url?: string
+  title?: string
+}
+
 const defaultForm: FormState = {
   mode: '1',
   skurl: '',
@@ -119,7 +131,26 @@ function normalizeSku(value: string) {
 }
 
 function providerLabel(provider?: string) {
-  return provider === 'jos' ? '开放平台' : '公开商品页'
+  return provider === 'jos' ? '开放平台' : '商品页'
+}
+
+function statusText(status: TaskStatus, isRunning: boolean, hasSavedLogin: boolean) {
+  if (status.status === 'submitted') return { label: '已提交订单', variant: 'success' as const }
+  if (status.status === 'success' && status.last_stock_state === 'checkout') return { label: '已到结算页', variant: 'success' as const }
+  if (status.status === 'found') return { label: '发现可购', variant: 'success' as const }
+  if (isRunning) return { label: '运行中', variant: 'default' as const }
+  if (status.status === 'error' || status.last_error) return { label: '需处理', variant: 'warning' as const }
+  if (hasSavedLogin) return { label: '已保存登录', variant: 'secondary' as const }
+  return { label: '待配置', variant: 'outline' as const }
+}
+
+function StatBlock({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="min-h-20 rounded-md border bg-muted/35 p-3">
+      <p className="mb-1 text-xs text-muted-foreground">{label}</p>
+      <p className="break-words text-sm font-medium">{value || '-'}</p>
+    </div>
+  )
 }
 
 function App() {
@@ -131,39 +162,30 @@ function App() {
   const [qrUrl, setQrUrl] = useState('')
   const [loginMessage, setLoginMessage] = useState('')
   const [dialog, setDialog] = useState('')
-  const [managedBrowserInfo, setManagedBrowserInfo] = useState<null | { login: boolean; message?: string; browser?: string; cookie_count?: number; current_url?: string; title?: string }>(null)
+  const [managedBrowserInfo, setManagedBrowserInfo] = useState<ManagedBrowserInfo | null>(null)
 
   const sku = useMemo(() => normalizeSku(form.skurl), [form.skurl])
   const hasSavedLogin = Boolean(status.login || status.cookies_saved)
   const isConfirmedLogin = Boolean(status.login_confirmed)
   const isRunning = Boolean(status.running)
   const hasTask = Boolean(status.sku)
-
-  const statusBadge = useMemo(() => {
-    if (status.status === 'submitted') return { label: '已提交订单', variant: 'success' as const }
-    if (status.status === 'found') return { label: '发现可能有货', variant: 'success' as const }
-    if (status.status === 'success' && status.last_stock_state === 'checkout') return { label: '已到结算页', variant: 'success' as const }
-    if (isRunning) return { label: '监控中', variant: 'default' as const }
-    if (status.status === 'error' || status.last_error) return { label: '需要处理', variant: 'warning' as const }
-    if (hasSavedLogin) return { label: '已保存登录', variant: 'secondary' as const }
-    return { label: '待配置', variant: 'outline' as const }
-  }, [hasSavedLogin, isRunning, status.last_error, status.last_stock_state, status.status])
+  const badge = useMemo(() => statusText(status, isRunning, hasSavedLogin), [hasSavedLogin, isRunning, status])
 
   function patchForm(patch: Partial<FormState>) {
     setForm((current) => ({ ...current, ...patch }))
   }
 
-  async function refreshStatus() {
+  const refreshStatus = useCallback(async () => {
     const data = await api<TaskStatus>('/api/task-status')
     setStatus(data || {})
-  }
+  }, [])
 
-  async function refreshLog() {
+  const refreshLog = useCallback(async () => {
     const data = await api<string>('/api/log')
     setLogText(data || '')
-  }
+  }, [])
 
-  async function loadConfig() {
+  const loadConfig = useCallback(async () => {
     const config = await api<AppConfig>('/api/config')
     const spider = config.Spider || {}
     setForm((current) => ({
@@ -178,7 +200,7 @@ function App() {
       date: toDatetimeLocal(spider.buy_time),
       stock_provider: spider.stock_provider === 'jos' ? 'jos' : 'page',
     }))
-  }
+  }, [])
 
   async function runBusy(action: () => Promise<void>) {
     setBusy(true)
@@ -232,26 +254,20 @@ function App() {
 
   async function openBrowserLogin() {
     await runBusy(async () => {
-      const data = await api<{ ok: boolean; message?: string; port?: number; profile_dir?: string }>(
-        '/api/open-browser-login',
-        { method: 'POST', body: '{}' },
-      )
+      const data = await api<{ ok: boolean; message?: string }>('/api/open-browser-login', { method: 'POST', body: '{}' })
       setDialog(data.message || '已打开专用京东浏览器')
     })
   }
 
   async function checkManagedBrowserStatus() {
     await runBusy(async () => {
-      const data = await api<{ ok: boolean; login: boolean; message?: string; browser?: string; cookie_count?: number; current_url?: string; title?: string }>(
-        '/api/managed-browser-status',
-        { method: 'POST', body: '{}' },
-      )
+      const data = await api<ManagedBrowserInfo>('/api/managed-browser-status', { method: 'POST', body: '{}' })
       setManagedBrowserInfo(data)
       setDialog(data.message || '已检查专用浏览器状态')
     })
   }
 
-  async function pollLogin() {
+  const pollLogin = useCallback(async () => {
     const data = await api<{ login: boolean; message?: string; cookies_saved?: boolean; login_confirmed?: boolean }>('/api/login-poll')
     setLoginMessage(data.message || '等待扫码确认')
     if (data.login) {
@@ -265,12 +281,12 @@ function App() {
       setDialog(data.message || '扫码登录成功')
       await refreshStatus()
     }
-  }
+  }, [refreshStatus])
 
   function validateForm() {
     if (!sku) throw new Error('请输入标准京东商品链接，或 5 到 20 位商品 ID')
     if (!form.area.trim()) throw new Error('地区 ID 不能为空')
-    if (form.mode === '2' && !form.date) throw new Error('定时监控需要设置运行时间')
+    if (form.mode === '2' && !form.date) throw new Error('定时下单需要设置运行时间')
   }
 
   async function checkNow() {
@@ -294,7 +310,7 @@ function App() {
   async function startMonitor() {
     await runBusy(async () => {
       validateForm()
-      const data = await api<{ message?: string; task?: TaskStatus; started?: boolean; running?: boolean }>('/api/jd-shopper', {
+      const data = await api<{ message?: string; task?: TaskStatus }>('/api/jd-shopper', {
         method: 'POST',
         body: JSON.stringify({
           mode: form.mode,
@@ -325,10 +341,19 @@ function App() {
   }
 
   useEffect(() => {
-    loadConfig().catch((error) => setDialog(error.message))
-    refreshStatus().catch((error) => setDialog(error.message))
-    refreshLog().catch(() => undefined)
-  }, [])
+    let cancelled = false
+    async function boot() {
+      try {
+        await Promise.all([loadConfig(), refreshStatus(), refreshLog()])
+      } catch (error) {
+        if (!cancelled) setDialog(error instanceof Error ? error.message : '初始化失败')
+      }
+    }
+    void boot()
+    return () => {
+      cancelled = true
+    }
+  }, [loadConfig, refreshLog, refreshStatus])
 
   useEffect(() => {
     if (!qrOpen) return
@@ -336,7 +361,7 @@ function App() {
       pollLogin().catch((error) => setLoginMessage(error.message))
     }, 2000)
     return () => window.clearInterval(timer)
-  }, [qrOpen])
+  }, [pollLogin, qrOpen])
 
   useEffect(() => {
     if (!isRunning) return
@@ -345,104 +370,100 @@ function App() {
       refreshLog().catch(() => undefined)
     }, 3000)
     return () => window.clearInterval(timer)
-  }, [isRunning])
+  }, [isRunning, refreshLog, refreshStatus])
 
   return (
-    <main className="min-h-screen bg-background">
-      <div className="grid min-h-screen lg:grid-cols-[286px_minmax(0,1fr)]">
-        <aside className="border-b bg-card px-5 py-6 lg:border-b-0 lg:border-r">
-          <div className="mb-6 flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">JD</div>
+    <main className="min-h-screen bg-background text-foreground">
+      <div className="border-b bg-card">
+        <div className="mx-auto flex max-w-[1480px] flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
+              JD
+            </div>
             <div>
-              <p className="text-xs text-muted-foreground">Stock Monitor</p>
-              <h1 className="text-lg font-semibold tracking-normal">京东库存监控</h1>
+              <p className="text-xs font-medium uppercase text-muted-foreground">Local Client</p>
+              <h1 className="text-xl font-semibold tracking-normal">京东库存监控工作台</h1>
             </div>
           </div>
-
-          <div className="space-y-4">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-3">
-                  <CardTitle>账户</CardTitle>
-                  <Badge variant={isConfirmedLogin ? 'success' : hasSavedLogin ? 'warning' : 'outline'}>
-                    {isConfirmedLogin ? '已登录' : hasSavedLogin ? '已保存' : '未登录'}
-                  </Badge>
-                </div>
-                <CardDescription>{hasSavedLogin ? '已保存扫码 cookies，可用于监控请求。' : '使用京东 App 扫码保存登录态。'}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col gap-2">
-                  <Button className="w-full" variant="outline" onClick={startLogin} disabled={busy}>
-                    <LogIn className="h-4 w-4" />
-                    {hasSavedLogin ? '重新扫码登录' : '扫码登录'}
-                  </Button>
-                  <Button className="w-full" variant="secondary" onClick={openBrowserLogin} disabled={busy}>
-                    打开专用京东浏览器
-                  </Button>
-                  <Button className="w-full" variant="secondary" onClick={checkManagedBrowserStatus} disabled={busy}>
-                    检查专用浏览器状态
-                  </Button>
-                  <Button className="w-full" variant="secondary" onClick={importBrowserLogin} disabled={busy}>
-                    从 Chrome 导入登录态
-                  </Button>
-                </div>
-                {managedBrowserInfo ? (
-                  <div className="mt-3 rounded-lg border bg-muted/40 p-3 text-xs">
-                    <p>专用浏览器：{managedBrowserInfo.login ? '已登录' : '未登录'}</p>
-                    {managedBrowserInfo.browser ? <p>来源：{managedBrowserInfo.browser}</p> : null}
-                    {managedBrowserInfo.cookie_count !== undefined ? <p>Cookies：{managedBrowserInfo.cookie_count}</p> : null}
-                    {managedBrowserInfo.title ? <p>页面：{managedBrowserInfo.title}</p> : null}
-                  </div>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle>检测方式</CardTitle>
-                <CardDescription>默认走公开商品页；开放平台需要官方授权配置。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Tabs value={form.stock_provider} onValueChange={(value) => patchForm({ stock_provider: value === 'jos' ? 'jos' : 'page' })}>
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="page">商品页</TabsTrigger>
-                    <TabsTrigger value="jos">开放平台</TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </CardContent>
-            </Card>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={badge.variant}>{badge.label}</Badge>
+            <Badge variant={isConfirmedLogin ? 'success' : hasSavedLogin ? 'warning' : 'outline'}>
+              {isConfirmedLogin ? '登录已验证' : hasSavedLogin ? '已保存 Cookies' : '未登录'}
+            </Badge>
+            <Badge variant="outline">{providerLabel(form.stock_provider)}</Badge>
           </div>
+        </div>
+      </div>
+
+      <div className="mx-auto grid max-w-[1480px] gap-5 px-5 py-5 xl:grid-cols-[310px_minmax(0,1fr)_390px]">
+        <aside className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle>账户链路</CardTitle>
+              <CardDescription>专用浏览器登录最稳，扫码登录作为备用。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Button className="w-full justify-start" variant="outline" onClick={startLogin} disabled={busy}>
+                <LogIn className="h-4 w-4" />
+                {hasSavedLogin ? '重新扫码登录' : '扫码登录'}
+              </Button>
+              <Button className="w-full justify-start" variant="secondary" onClick={openBrowserLogin} disabled={busy}>
+                <Monitor className="h-4 w-4" />
+                打开专用京东浏览器
+              </Button>
+              <Button className="w-full justify-start" variant="secondary" onClick={checkManagedBrowserStatus} disabled={busy}>
+                <ShieldCheck className="h-4 w-4" />
+                检查专用浏览器
+              </Button>
+              <Button className="w-full justify-start" variant="secondary" onClick={importBrowserLogin} disabled={busy}>
+                <RefreshCcw className="h-4 w-4" />
+                导入浏览器登录态
+              </Button>
+
+              {managedBrowserInfo ? (
+                <div className="rounded-md border bg-muted/35 p-3 text-xs leading-6">
+                  <p>状态：{managedBrowserInfo.login ? '已登录' : '未登录'}</p>
+                  {managedBrowserInfo.cookie_count !== undefined ? <p>Cookies：{managedBrowserInfo.cookie_count}</p> : null}
+                  {managedBrowserInfo.title ? <p className="break-words">页面：{managedBrowserInfo.title}</p> : null}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>检测来源</CardTitle>
+              <CardDescription>开放平台需要先配置官方授权。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs value={form.stock_provider} onValueChange={(value) => patchForm({ stock_provider: value === 'jos' ? 'jos' : 'page' })}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="page">商品页</TabsTrigger>
+                  <TabsTrigger value="jos">开放平台</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </CardContent>
+          </Card>
         </aside>
 
-        <section className="p-5 lg:p-6">
-          <header className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase text-muted-foreground">Monitoring Console</p>
-              <h2 className="text-2xl font-semibold tracking-normal">商品监控工作台</h2>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
-              <Badge variant="outline">{providerLabel(form.stock_provider)}</Badge>
-            </div>
-          </header>
+        <section className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle>任务配置</CardTitle>
+              <CardDescription>填写商品、地区和运行参数后，可以先检测，再启动自动流程。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label>运行模式</Label>
+                <Tabs value={form.mode} onValueChange={(value) => patchForm({ mode: value === '2' ? '2' : '1' })}>
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="1">有货自动下单</TabsTrigger>
+                    <TabsTrigger value="2">定时下单</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
 
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)]">
-            <Card>
-                <CardHeader>
-                  <CardTitle>监控配置</CardTitle>
-                <CardDescription>填写商品、地区和轮询参数。程序会按模式自动尝试下单，状态和结果会同步显示在右侧。</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5">
-                <div className="space-y-2">
-                  <Label>监控模式</Label>
-                  <Tabs value={form.mode} onValueChange={(value) => patchForm({ mode: value === '2' ? '2' : '1' })}>
-                    <TabsList className="grid w-full grid-cols-2">
-                      <TabsTrigger value="1">有货自动下单</TabsTrigger>
-                      <TabsTrigger value="2">定时下单</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
-
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(220px,0.6fr)]">
                 <div className="space-y-2">
                   <Label htmlFor="goods-link">商品链接或 SKU</Label>
                   <Input
@@ -452,155 +473,138 @@ function App() {
                     placeholder="https://item.jd.com/100021044189.html"
                   />
                 </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="area">地区 ID</Label>
-                    <Input id="area" value={form.area} onChange={(event) => patchForm({ area: event.target.value })} placeholder="1_72_2799_0" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="run-at">运行时间</Label>
-                    <Input
-                      id="run-at"
-                      type="datetime-local"
-                      value={form.date}
-                      onChange={(event) => patchForm({ date: event.target.value })}
-                      disabled={form.mode === '1'}
-                    />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="area">地区 ID</Label>
+                  <Input id="area" value={form.area} onChange={(event) => patchForm({ area: event.target.value })} placeholder="1_72_2799_0" />
                 </div>
+              </div>
 
-                <div className="grid gap-4 md:grid-cols-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="count">数量</Label>
-                    <Input id="count" type="number" min="1" max="999" value={form.count} onChange={(event) => patchForm({ count: event.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="timeout">间隔秒</Label>
-                    <Input id="timeout" type="number" min="1" max="1000" value={form.timeout} onChange={(event) => patchForm({ timeout: event.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="retry">重试</Label>
-                    <Input id="retry" type="number" min="1" max="1000" value={form.retry} onChange={(event) => patchForm({ retry: event.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="work-count">并发</Label>
-                    <Input id="work-count" type="number" min="1" max="3" value={form.work_count} onChange={(event) => patchForm({ work_count: event.target.value })} />
-                  </div>
+              <div className="grid gap-4 md:grid-cols-5">
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="run-at">运行时间</Label>
+                  <Input id="run-at" type="datetime-local" value={form.date} onChange={(event) => patchForm({ date: event.target.value })} disabled={form.mode === '1'} />
                 </div>
-
-                <div className="rounded-lg border bg-amber-50 p-3 text-sm text-amber-900">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="font-medium">自动点击提交订单</p>
-                      <p className="text-xs text-amber-800">默认关闭。关闭时程序只会进入结算页并定位到“提交订单”按钮；开启后才会实际点击提交。</p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant={form.submit_order ? 'destructive' : 'outline'}
-                      onClick={() => patchForm({ submit_order: !form.submit_order })}
-                    >
-                      {form.submit_order ? '已开启' : '保持关闭'}
-                    </Button>
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="count">数量</Label>
+                  <Input id="count" type="number" min="1" max="999" value={form.count} onChange={(event) => patchForm({ count: event.target.value })} />
                 </div>
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
-                  <Button variant="outline" onClick={() => setForm(defaultForm)} disabled={busy}>
-                    重置
-                  </Button>
-                  <Button variant="secondary" onClick={checkNow} disabled={busy}>
-                    {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageSearch className="h-4 w-4" />}
-                    立即检测
-                  </Button>
-                  <Button onClick={startMonitor} disabled={busy || isRunning}>
-                    {form.mode === '2' ? <Clock3 className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                    {isRunning ? '运行中' : form.mode === '2' ? '启动定时下单' : '开始自动下单'}
-                  </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="timeout">间隔秒</Label>
+                  <Input id="timeout" type="number" min="1" max="1000" value={form.timeout} onChange={(event) => patchForm({ timeout: event.target.value })} />
                 </div>
-              </CardContent>
-            </Card>
+                <div className="space-y-2">
+                  <Label htmlFor="retry">重试</Label>
+                  <Input id="retry" type="number" min="1" max="1000" value={form.retry} onChange={(event) => patchForm({ retry: event.target.value })} />
+                </div>
+              </div>
 
-            <Card>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-col gap-4 rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-950 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <ShoppingCart className="mt-0.5 h-5 w-5 shrink-0" />
                   <div>
-                    <CardTitle>运行状态</CardTitle>
-                    <CardDescription>登录、库存和错误诊断。</CardDescription>
+                    <p className="font-medium">自动点击提交订单</p>
+                    <p className="text-sm text-amber-800">关闭时只进入结算页并定位按钮；开启后会真实点击提交。</p>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => runBusy(refreshStatus)} disabled={busy}>
-                    <RefreshCcw className="h-4 w-4" />
-                    <span className="sr-only">刷新状态</span>
-                  </Button>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
-                  {[
-                    ['SKU', status.sku || '-'],
-                    ['状态', status.status || (isRunning ? 'running' : '-')],
-                    ['库存', status.last_stock_state || '未检测'],
-                    ['检查时间', status.last_check_time || '-'],
-                  ].map(([label, value]) => (
-                  <div key={label} className="min-h-20 rounded-lg border bg-muted/45 p-3">
-                      <p className="mb-1 text-xs text-muted-foreground">{label}</p>
-                      <p className="break-words text-sm font-medium">{value}</p>
-                    </div>
-                  ))}
-                </div>
+                <Button type="button" variant={form.submit_order ? 'destructive' : 'outline'} onClick={() => patchForm({ submit_order: !form.submit_order })}>
+                  {form.submit_order ? '已开启' : '保持关闭'}
+                </Button>
+              </div>
 
-                {hasTask ? (
-                  <div className="rounded-lg border bg-background p-3">
-                    <div className="flex items-start gap-2">
-                      {status.status === 'found' ? <BellRing className="mt-0.5 h-4 w-4 text-emerald-600" /> : status.last_error ? <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 text-muted-foreground" />}
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">{status.message || '暂无说明'}</p>
-                        {status.last_error ? <p className="mt-1 text-sm text-muted-foreground">{status.last_error}</p> : null}
-                        {status.manual_url ? (
-                          <a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline" href={status.manual_url} target="_blank" rel="noreferrer">
-                            打开京东商品页
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid min-h-36 place-items-center rounded-lg border border-dashed text-center text-sm text-muted-foreground">
-                    配置商品后可以立即检测，或直接启动自动下单。
-                  </div>
-                )}
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <Button variant="outline" onClick={() => setForm(defaultForm)} disabled={busy}>
+                  重置
+                </Button>
+                <Button variant="secondary" onClick={checkNow} disabled={busy}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageSearch className="h-4 w-4" />}
+                  立即检测
+                </Button>
+                <Button onClick={startMonitor} disabled={busy || isRunning}>
+                  {form.mode === '2' ? <Clock3 className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  {isRunning ? '运行中' : form.mode === '2' ? '启动定时下单' : '开始自动下单'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
 
-                <div className="flex flex-col gap-3 sm:flex-row">
-                  <Button variant="secondary" className="flex-1" onClick={checkNow} disabled={busy}>
-                    <PackageSearch className="h-4 w-4" />
-                    立即检测
-                  </Button>
-                  <Button variant="destructive" className="flex-1" onClick={stopMonitor} disabled={busy || !isRunning}>
-                    <Square className="h-4 w-4" />
-                    停止监控
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="mt-5">
+          <Card>
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <CardTitle>日志</CardTitle>
-                <CardDescription>服务端运行记录。</CardDescription>
+                <CardDescription>服务端实时输出。</CardDescription>
               </div>
               <Button variant="ghost" onClick={() => runBusy(refreshLog)} disabled={busy}>
                 <RefreshCcw className="h-4 w-4" />
-                刷新日志
+                刷新
               </Button>
             </CardHeader>
             <CardContent>
-              <Textarea value={logText} readOnly className="min-h-72 resize-y bg-zinc-950 font-mono text-xs leading-relaxed text-zinc-50" />
+              <Textarea value={logText} readOnly className="min-h-80 resize-y bg-zinc-950 font-mono text-xs leading-relaxed text-zinc-50" />
             </CardContent>
           </Card>
         </section>
+
+        <aside className="space-y-5">
+          <Card>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <CardTitle>运行状态</CardTitle>
+                <CardDescription>当前任务、库存和错误诊断。</CardDescription>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => runBusy(refreshStatus)} disabled={busy}>
+                <RefreshCcw className="h-4 w-4" />
+                <span className="sr-only">刷新状态</span>
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <StatBlock label="SKU" value={status.sku} />
+                <StatBlock label="状态" value={status.status || (isRunning ? 'running' : '-')} />
+                <StatBlock label="库存" value={status.last_stock_state || '未检测'} />
+                <StatBlock label="检查时间" value={status.last_check_time} />
+              </div>
+
+              {hasTask ? (
+                <div className="rounded-md border bg-background p-3">
+                  <div className="flex items-start gap-2">
+                    {status.status === 'found' ? (
+                      <BellRing className="mt-0.5 h-4 w-4 text-emerald-600" />
+                    ) : status.last_error ? (
+                      <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
+                    ) : (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                    )}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">{status.message || '暂无说明'}</p>
+                      {status.last_error ? <p className="mt-1 text-sm text-muted-foreground">{status.last_error}</p> : null}
+                      {status.manual_url ? (
+                        <a className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-primary underline-offset-4 hover:underline" href={status.manual_url} target="_blank" rel="noreferrer">
+                          打开京东商品页
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid min-h-36 place-items-center rounded-md border border-dashed px-5 text-center text-sm text-muted-foreground">
+                  配置商品后可以立即检测，或直接启动自动流程。
+                </div>
+              )}
+
+              <div className="grid gap-3">
+                <Button variant="secondary" onClick={checkNow} disabled={busy}>
+                  <PackageSearch className="h-4 w-4" />
+                  立即检测
+                </Button>
+                <Button variant="destructive" onClick={stopMonitor} disabled={busy || !isRunning}>
+                  <Square className="h-4 w-4" />
+                  停止监控
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </aside>
       </div>
 
       <Dialog open={qrOpen} onOpenChange={setQrOpen}>

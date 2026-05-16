@@ -156,7 +156,7 @@ def startQrLogin(request):
     ok = qrlogin.prepare_qrcode()
     return {
         "login": False,
-        "qrcode": "./img/qr_code.png?t={}".format(time_string().replace(' ', '_')),
+        "qrcode": "/runtime/qr_code.png?t={}".format(time_string().replace(' ', '_')),
         "message": "二维码已生成，请用京东 App 扫码确认。" if ok else "二维码生成失败。",
     }
 
