@@ -1,3 +1,6 @@
-lxml==4.5.1
-bs4==0.0.1
-requests==2.24.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.4
+requests>=2.31.0
+cryptography>=45.0.0
+playwright>=1.52.0
+pywin32>=311

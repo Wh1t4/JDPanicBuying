@@ -2,129 +2,207 @@
 <html>
   <head>
     <meta charset="UTF-8" />
-    <title>订单自动提交</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>京东库存监控</title>
     <link rel="Shortcut Icon" href="favicon.ico" type="./image/x-icon" />
-    <link type="text/css" rel="stylesheet" href="./css/element_index.css" />
     <link type="text/css" rel="stylesheet" href="./css/index.css" />
   </head>
   <body>
-    <div id="form_container">
-      <h1>订单自动提交</h1>
-      <textarea v-show="!task" id="log" onpropertychange="this.scrollTop=this.scrollHeight" οnfοcus="this.scrollTop=this.scrollHeight" ></textarea>
-      <el-form v-show="task" ref="form" label-width="80px">
-        <el-form-item label="下单模式">
-          <el-radio v-model="mode" label="1" @change="buyMode" border
-            >有货自动下单</el-radio
-          >
-          <el-radio v-model="mode" label="2" @change="buyMode" border
-            >定时下单</el-radio
-          >
-        </el-form-item>
-        </el-form-item>
-        <el-form-item label="运行时间">
-          <el-date-picker
-            v-model="date"
-            type="datetime"
-            :disabled="timeSelectAble"
-            placeholder="选择日期时间">
-          </el-date-picker>
-        </el-form-item>
-        <el-form-item label="地区ID">
-          <el-input
-            id="account_input"
-            v-model="area"
-            placeholder="所属地区ID"
-            autocomplete
-          ></el-input>
-        </el-form-item>
-        <el-form-item label="商品" id="goods_link_form">
-          <el-input
-            class="goods_input"
-            v-model="skurl"
-            placeholder="填入商品链接"
-            autocomplete
-          ></el-input>
-          <el-input-number
-            class="num_select"
-            v-model="count"
-            :min="1"
-            :max="999"
-            label="购买数量"
-          ></el-input-number>
-        </el-form-item>
-        <el-form-item label="超时时间">
-          <el-input-number
-            v-model="timeout"
-            :min="1"
-            :max="1000"
-            label="超时时间"
-          ></el-input-number>
-        </el-form-item>
-        <el-form-item label="重试次数">
-          <el-input-number
-            v-model="retry"
-            :min="1"
-            :max="1000"
-            label="重试次数"
-          ></el-input-number>
-        </el-form-item>
-        <el-form-item label="线程数">
-          <el-input-number
-            v-model="work_count"
-            :min="1"
-            :max="3"
-            label="线程数"
-          ></el-input-number>
-        </el-form-item>
-        <el-button id="add_button" @click="reset()">重置选项</el-button>
-        <el-button
-          id="run_button"
-          @click="upload()"
-          type="primary"
-          >开始运行</el-button
-        >
+    <main id="app" class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">JD</div>
+          <div>
+            <p>Stock Monitor</p>
+            <h1>京东库存监控</h1>
+          </div>
+        </div>
 
-        <el-dialog
-          title="二维码"
-          :visible.sync="qrVisible"
-          width="30%">
-          <el-image v-if="qrReset" :src="qrUrl" :key="qrID"></el-image>
-          <span slot="footer" class="dialog-footer">
-          </span>
-        </el-dialog>
+        <section class="panel compact account-panel">
+          <div class="panel-heading">
+            <h2>账户</h2>
+            <span class="badge" :class="{success: isLoggedIn || hasSavedCookies, warning: hasSavedCookies && !isLoginConfirmed}">
+              {{accountBadgeText}}
+            </span>
+          </div>
+          <button class="button secondary full" type="button" @click="startLogin()" :disabled="isBusy">
+            {{isLoggedIn ? '重新扫码登录' : '京东 App 扫码登录'}}
+          </button>
+        </section>
 
-        <el-dialog
-          title="title"
-          :visible.sync="dialogVisible"
-          width="30%">
-          <span>{{dialog}}</span>
-          <span slot="footer" class="dialog-footer">
-            <el-button @click="dialogVisible = false">取 消</el-button>
-            <el-button type="primary" @click="dialogVisible = false">确 定</el-button>
-          </span>
-        </el-dialog>
+        <section class="panel compact">
+          <div class="panel-heading">
+            <h2>检测方式</h2>
+          </div>
+          <div class="source-list">
+            <label :class="{active: stock_provider === 'page'}">
+              <input type="radio" value="page" v-model="stock_provider">
+              <span>公开商品页</span>
+              <small>启发式判断页面购买入口</small>
+            </label>
+            <label :class="{active: stock_provider === 'jos'}">
+              <input type="radio" value="jos" v-model="stock_provider">
+              <span>开放平台</span>
+              <small>需要官方开放平台配置</small>
+            </label>
+          </div>
+        </section>
+      </aside>
 
-      </el-form>
-    </div>
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Monitoring Console</p>
+            <h2>商品监控工作台</h2>
+          </div>
+          <span class="badge" :class="statusBadgeClass">{{statusBadgeText}}</span>
+        </header>
+
+        <section class="dashboard">
+          <article class="panel setup-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>监控配置</h2>
+                <p>填写商品、地区和轮询参数</p>
+              </div>
+            </div>
+
+            <form class="form" @submit.prevent="upload()">
+              <div class="field">
+                <label>监控模式</label>
+                <div class="segmented" role="radiogroup" aria-label="监控模式">
+                  <button type="button" :class="{active: mode === '1'}" @click="setMode('1')">有货提醒</button>
+                  <button type="button" :class="{active: mode === '2'}" @click="setMode('2')">定时监控</button>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="goods_link">商品链接或 SKU</label>
+                <input id="goods_link" class="input" v-model="skurl" placeholder="https://item.jd.com/100021044189.html" autocomplete="off" />
+              </div>
+
+              <div class="grid two">
+                <div class="field">
+                  <label for="area">地区 ID</label>
+                  <input id="area" class="input" v-model="area" placeholder="1_72_2799_0" autocomplete="off" />
+                </div>
+                <div class="field">
+                  <label for="run_at">运行时间</label>
+                  <input id="run_at" class="input" type="datetime-local" v-model="date" :disabled="timeSelectAble" />
+                </div>
+              </div>
+
+              <div class="grid four">
+                <div class="field">
+                  <label for="count">数量</label>
+                  <input id="count" class="input" type="number" min="1" max="999" v-model="count" />
+                </div>
+                <div class="field">
+                  <label for="timeout">超时</label>
+                  <input id="timeout" class="input" type="number" min="1" max="1000" v-model="timeout" />
+                </div>
+                <div class="field">
+                  <label for="retry">重试</label>
+                  <input id="retry" class="input" type="number" min="1" max="1000" v-model="retry" />
+                </div>
+                <div class="field">
+                  <label for="work_count">并发</label>
+                  <input id="work_count" class="input" type="number" min="1" max="3" v-model="work_count" />
+                </div>
+              </div>
+
+              <div class="toolbar split">
+                <button class="button secondary" type="button" @click="reset()">重置</button>
+                <div>
+                  <button class="button secondary" type="button" @click="checkNow()" :disabled="isBusy">立即检测</button>
+                  <button class="button primary" type="submit" :disabled="isBusy || isRunning">
+                    {{isRunning ? '监控中' : '开始监控'}}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </article>
+
+          <article class="panel status-panel">
+            <div class="panel-heading">
+              <div>
+                <h2>运行状态</h2>
+                <p>登录、库存和错误诊断</p>
+              </div>
+              <button class="button ghost" type="button" @click="refreshStatus()" :disabled="isBusy">刷新</button>
+            </div>
+
+            <div v-if="hasStatus" class="status-grid">
+              <div class="stat-card">
+                <span>SKU</span>
+                <strong>{{taskStatus.sku || '-'}}</strong>
+              </div>
+              <div class="stat-card">
+                <span>状态</span>
+                <strong>{{taskStatus.status || '-'}}</strong>
+              </div>
+              <div class="stat-card">
+                <span>库存</span>
+                <strong>{{taskStatus.last_stock_state || '未检测'}}</strong>
+              </div>
+              <div class="stat-card">
+                <span>检查时间</span>
+                <strong>{{taskStatus.last_check_time || '-'}}</strong>
+              </div>
+            </div>
+
+            <div v-if="hasStatus" class="notice" :class="{danger: taskStatus.last_error, success: taskStatus.status === 'found'}">
+              <strong>{{taskStatus.message || '暂无说明'}}</strong>
+              <p v-if="taskStatus.last_error">{{taskStatus.last_error}}</p>
+              <a v-if="taskStatus.manual_url" :href="taskStatus.manual_url" target="_blank" rel="noopener">打开京东商品页</a>
+            </div>
+
+            <div v-else class="empty-state">
+              <h3>等待任务</h3>
+              <p>配置商品后可以立即检测或开始监控。</p>
+            </div>
+
+            <div class="toolbar">
+              <button class="button secondary" type="button" @click="checkNow()" :disabled="isBusy">立即检测</button>
+              <button class="button danger" type="button" @click="stopTask()" :disabled="isBusy || !isRunning">停止监控</button>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel log-panel">
+          <div class="panel-heading">
+            <div>
+              <h2>日志</h2>
+              <p>服务端运行记录</p>
+            </div>
+            <button class="button ghost" type="button" @click="getLog()" :disabled="isBusy">刷新日志</button>
+          </div>
+          <textarea id="log" readonly v-model="logText"></textarea>
+        </section>
+      </section>
+
+      <div v-show="dialogVisible" class="overlay" @click.self="dialogVisible = false">
+        <section class="dialog" role="dialog" aria-modal="true">
+          <header><h2>提示</h2></header>
+          <p>{{dialog}}</p>
+          <footer>
+            <button class="button primary" type="button" @click="dialogVisible = false">确定</button>
+          </footer>
+        </section>
+      </div>
+
+      <div v-show="qrVisible" class="overlay" @click.self="stopLoginPoll()">
+        <section class="dialog qr-dialog" role="dialog" aria-modal="true">
+          <header><h2>京东扫码登录</h2></header>
+          <img v-if="qrUrl" :src="qrUrl" class="qr-code" alt="京东登录二维码">
+          <p class="qr-message">{{loginMessage}}</p>
+          <footer>
+            <button class="button secondary" type="button" @click="stopLoginPoll()">关闭</button>
+          </footer>
+        </section>
+      </div>
+    </main>
   </body>
   <script src="./js/vue.js"></script>
-  <script src="./js/element_index.js"></script>
-  <script src="https://gias.jd.com/js/td.js"></script>
   <script src="./js/index.js"></script>
 </html>
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->
-<!-- // -->

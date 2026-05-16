@@ -48,6 +48,9 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+playwright-report/
+test-results/
+.playwright-mcp/
 
 # Translations
 *.mo
@@ -95,6 +98,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+jd-conda-env/
 
 # Spyder project settings
 .spyderproject
@@ -116,3 +120,23 @@ dmypy.json
 
 # PyCharm
 .idea/
+
+# Project runtime / local state
+.codex-tasks/
+cookies/
+*.cookies
+Logger/Log_Files/
+server.out.log
+server.err.log
+Static/img/qr_code.png
+jd-stock-monitor-shadcn.png
+
+# Local helper/runtime outputs
+*.pid
+*.tmp
+
+# Frontend dependencies / build artifacts
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/

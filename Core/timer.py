@@ -30,10 +30,16 @@ class Timer(object):
         :return:
         """
         url = 'https://api.m.jd.com/client.action?functionId=queryMaterialProducts&client=wh5'
-        ret = requests.get(url).text
-        js = json.loads(ret)
-        return int(js["currentTime2"])
-        # return int(round(time.time() * 1000))
+        try:
+            ret = requests.get(url, timeout=5).text
+            js = json.loads(ret)
+            jd_time = js.get("currentTime2") or js.get("currentTime")
+            if jd_time is None:
+                raise KeyError("currentTime2")
+            return int(jd_time)
+        except Exception as e:
+            logger.warning('京东时间接口不可用，改用本地时间。原因：%s', e)
+            return self.local_time()
 
     def local_time(self):
         """
@@ -51,7 +57,7 @@ class Timer(object):
 
     def start(self):
         logger.info('正在等待到达设定时间:{}'.format(self.buy_time))
-        logger.info('正检测本地时间与京东服务器时间误差为【{}】毫秒'.format(self.diff_time))
+        logger.info('本地时间与参考时间误差为【{}】毫秒'.format(self.diff_time))
 
         while True:
             # 本地时间减去与京东的时间差，能够将时间误差提升到0.1秒附近

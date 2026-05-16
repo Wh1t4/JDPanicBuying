@@ -1,5 +1,4 @@
-import json
-from http.server import HTTPServer
+from http.server import ThreadingHTTPServer
 from Logger.logger import logger
 from Server.handler import RequestHandler
 from Config.settings import config
@@ -22,5 +21,5 @@ def server():
     serverAddress = (host, port)
     logger.info("{}-{}".format(NAME, VERSION))
     logger.info("http://{}:{}/".format(name, port))
-    server = HTTPServer(serverAddress, RequestHandler)
+    server = ThreadingHTTPServer(serverAddress, RequestHandler)
     server.serve_forever()

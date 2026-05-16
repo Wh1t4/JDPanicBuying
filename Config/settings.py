@@ -1,4 +1,5 @@
 import os
+import ast
 import configparser
 
 class Config(object):
@@ -12,8 +13,14 @@ class Config(object):
         self._configRaw = configparser.RawConfigParser()
         self._configRaw.read(self._path, encoding='utf-8-sig')
 
+    def parse_value(self, value):
+        try:
+            return ast.literal_eval(value)
+        except (ValueError, SyntaxError):
+            return value
+
     def settings(self, section, name):
-        return eval(self._config.get(section, name))
+        return self.parse_value(self._config.get(section, name))
 
     def raw(self, section, name):
         return self._configRaw.get(section, name)

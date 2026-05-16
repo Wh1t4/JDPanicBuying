@@ -5,6 +5,7 @@ import functools
 import json
 import os
 import pickle
+from requests.cookies import RequestsCookieJar
 from Logger.logger import logger
 from Config.settings import config
 from Core.exception import SKException
@@ -63,18 +64,29 @@ class SpiderSession:
         从本地加载Cookie
         :return:
         """
-        cookies_file = ''
         if not os.path.exists(self.cookies_dir_path):
             return False
+        cookie_files = []
         for name in os.listdir(self.cookies_dir_path):
             if name.endswith(".cookies"):
-                cookies_file = '{}{}'.format(self.cookies_dir_path, name)
-                break
-        if cookies_file == '':
+                full_path = '{}{}'.format(self.cookies_dir_path, name)
+                try:
+                    mtime = os.path.getmtime(full_path)
+                except OSError:
+                    continue
+                cookie_files.append((mtime, full_path))
+        if not cookie_files:
             return False
+        cookie_files.sort(key=lambda item: item[0], reverse=True)
+        cookies_file = cookie_files[0][1]
         with open(cookies_file, 'rb') as f:
             local_cookies = pickle.load(f)
         self.set_cookies(local_cookies)
+        return True
+
+    def has_login_cookies(self):
+        cookie_names = {cookie.name for cookie in self.get_cookies()}
+        return bool(cookie_names.intersection({'thor', 'pin', 'unick', '_pst'}))
 
     def save_cookies_to_local(self, cookie_file_name):
         """
@@ -88,6 +100,11 @@ class SpiderSession:
             os.makedirs(directory)
         with open(cookies_file, 'wb') as f:
             pickle.dump(self.get_cookies(), f)
+
+    def replace_cookies_and_save(self, cookies: RequestsCookieJar, cookie_file_name='jd'):
+        self.session.cookies.clear()
+        self.set_cookies(cookies)
+        self.save_cookies_to_local(cookie_file_name)
 
 
 class QrLogin:
@@ -136,7 +153,7 @@ class QrLogin:
             logger.error("验证cookies是否有效发生异常", e)
         return False
 
-    def _get_qrcode(self):
+    def _get_qrcode(self, open_qrcode=True):
         """
         缓存并展示登录二维码
         :return:
@@ -159,8 +176,12 @@ class QrLogin:
 
         save_image(resp, self.qrcode_img_file)
         logger.info('二维码获取成功，请打开京东APP扫描')
-        open_image(self.qrcode_img_file)
+        if open_qrcode:
+            open_image(self.qrcode_img_file)
         return True
+
+    def prepare_qrcode(self):
+        return self._get_qrcode(open_qrcode=False)
 
     def _get_qrcode_ticket(self):
         """

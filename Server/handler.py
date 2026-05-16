@@ -1,4 +1,5 @@
-import os, json, urllib, time
+import os, json, time, mimetypes
+from urllib.parse import urlparse, parse_qsl
 
 from Logger.logger import logger
 from http.server import BaseHTTPRequestHandler
@@ -11,45 +12,42 @@ from Server.url import urls
 class RequestHandler(BaseHTTPRequestHandler):
     """处理请求并返回页面"""
 
+    def static_root(self):
+        frontend_dist = os.path.join(config.path(), "frontend", "dist")
+        if os.path.exists(os.path.join(frontend_dist, "index.html")):
+            return frontend_dist
+        return os.path.join(config.path(), "Static")
+
     # 处理一个GET请求
     def do_GET(self):
-        self.rootPath = config.path() + "/Static"
-        url = self.requestline[4:-9]
-        # print(url)
-        request_data = {}  # 存放GET请求数据
-        try:
-            if url.find('?') != -1:
-                req = url.split('?', 1)[1]
-                url = url.split('?', 1)[0]
-                parameters = req.split('&')
-                for i in parameters:
-                    key, val = i.split('=', 1)
-                    request_data[key] = val
-            # request_data['body'] = self.rfile.read()
-        except:
-            logger.error("URL Format Error")
-        if (url == "/"):
-            self.home()
-        elif (url == ""):
-            self.noFound()
-        elif ("/api" in url):
+        self.rootPath = self.static_root()
+        parsed_url = urlparse(self.path)
+        url = parsed_url.path
+        request_data = dict(parse_qsl(parsed_url.query))  # 存放GET请求数据
+        if (url.startswith("/api")):
             self.api(url[4:], request_data)
+        elif (url == "/" or url == ""):
+            self.home()
         else:
             self.file(url)
 
     def do_POST(self):
-        LOCAL_HOST = config.settings("Server", "LOCAL_HOST")
-        PORT = config.settings("Server", "PORT")
-        hostLen = len(f'/{LOCAL_HOST}:{PORT}') + 5
-        self.rootPath = config.path() + "/Static"
-        url = self.requestline[hostLen:-9]
-        request_data = json.loads(self.rfile.read(int(self.headers['content-length'])).decode())
-        if (url == "/"):
-            self.home()
-        elif (url == ""):
-            self.noFound()
-        elif ("/api" in url):
+        self.rootPath = self.static_root()
+        url = urlparse(self.path).path
+        content_length = int(self.headers.get('content-length', 0))
+        if content_length:
+            try:
+                request_data = json.loads(self.rfile.read(content_length).decode())
+            except json.JSONDecodeError:
+                logger.error("JSON Format Error")
+                self.json_response({"data": None, "error": "JSON Format Error"}, status=400)
+                return
+        else:
+            request_data = {}
+        if (url.startswith("/api")):
             self.api(url[4:], request_data)
+        elif (url == "/" or url == ""):
+            self.home()
         else:
             self.file(url)
 
@@ -61,72 +59,45 @@ class RequestHandler(BaseHTTPRequestHandler):
             pass
 
     def home(self):
-
-        file_path = self.rootPath + "/index.html"
-        home_page_file = open(file_path, 'r', encoding="utf-8")
-        content = str(home_page_file.read())
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Length", str(len(content)))
-        self.end_headers()
-        self.wfile.write(content.encode())
+        self.send_static_file(os.path.join(self.rootPath, "index.html"))
 
     def file(self, url):
-        file_name = url.split("/")[-1]
-        file_sys_path = self.rootPath + url[:-len(file_name)]
-        file_path = ""
-        for root, dirs, files in os.walk(file_sys_path):
-            for file in files:
-                if file == file_name:
-                    file_path = os.path.join(root, file)
-                else:
-                    continue
-        if file_path != "":
-            self.send_response(200)
-        if file_path == "":
-            # file_path = self.rootPath + "/404.html" # Hard Code
+        safe_url = os.path.normpath(url.lstrip("/"))
+        if safe_url.startswith(".."):
             self.noFound()
-        elif file_name[-5:] == ".html":
-            self.send_header("Content-Type", "text/html")
-        elif file_name[-4:] == ".css":
-            self.send_header("Content-Type", "text/css")
-        elif file_name[-3:] == ".js":
-            self.send_header("Content-Type", "application/javascript")
-        elif file_name[-4:] == ".png":  # 二进制文件
-            self.send_header("Content-Type", "img/png")
-            file_page_file = open(file_path, 'rb')
-            self.end_headers()
-            self.wfile.write(file_page_file.read())
             return
-        elif file_name[-4:] == ".jpg":  # 二进制文件
-            self.send_header("Content-Type", "img/jpg")
-            file_page_file = open(file_path, 'rb')
-            self.end_headers()
-            self.wfile.write(file_page_file.read())
-            return
-        elif file_name[-4:] == ".ico":  # 二进制文件
-            self.send_header("Content-Type", "img/ico")
-            file_page_file = open(file_path, 'rb')
-            self.end_headers()
-            self.wfile.write(file_page_file.read())
-            return
-        elif file_name[-5:] == ".woff":  # 二进制文件
-            self.send_header("Content-Type", "img/ico")
-            file_page_file = open(file_path, 'rb')
-            self.end_headers()
-            self.wfile.write(file_page_file.read())
-            return
-        file_page_file = open(file_path, 'r', encoding="utf-8")
-        content = str(file_page_file.read())
-        self.send_header("Content-Length", str(len(content)))
+        file_path = os.path.join(self.rootPath, safe_url)
+        if os.path.isdir(file_path):
+            file_path = os.path.join(file_path, "index.html")
+        if not os.path.exists(file_path):
+            legacy_path = os.path.join(config.path(), "Static", safe_url)
+            if os.path.exists(legacy_path):
+                file_path = legacy_path
+            else:
+                self.noFound()
+                return
+        self.send_static_file(file_path)
+
+    def send_static_file(self, file_path):
+        content_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        with open(file_path, "rb") as file_page_file:
+            body = file_page_file.read()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(content.encode())
+        self.wfile.write(body)
 
     def api(self, url, request_data):
         # ----------------------------------------------------------------
         # 此处写API
-        content = urls(url, request_data)
+        try:
+            content = urls(url, request_data)
+            error = None
+        except Exception as e:
+            logger.exception("API Error")
+            content = None
+            error = str(e)
         # ----------------------------------------------------------------
         localtime = time.localtime(time.time())
         date = \
@@ -139,12 +110,27 @@ class RequestHandler(BaseHTTPRequestHandler):
         jsondict = {}
         jsondict["data"] = content
         jsondict["time"] = date
-        res = json.dumps(jsondict)
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Length", str(len(res)))
+        if error:
+            jsondict["error"] = error
+        self.json_response(jsondict, status=500 if error else 200)
+
+    def json_response(self, jsondict, status=200):
+        res = json.dumps(jsondict, ensure_ascii=False)
+        body = res.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(res.encode())
+        self.wfile.write(body)
 
     def noFound(self):
-        self.file("/404.html")
+        fallback = os.path.join(self.rootPath, "404.html")
+        if os.path.exists(fallback):
+            self.send_static_file(fallback)
+            return
+        self.send_response(404)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        body = "Not Found".encode()
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
